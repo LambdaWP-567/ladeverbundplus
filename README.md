@@ -20,3 +20,11 @@ Use the following environment variables:
 docker build -t charger-scraper .
 docker run -d -p 8000:8000 --name charger-scraper charger-scraper
 ```
+
+## GitHub Actions
+This repository includes a GitHub Action to automatically build and publish the Docker image to GitHub Container Registry (GHCR) on every push to the main branch.
+
+To pull the latest image:
+```bash
+docker pull ghcr.io/<your-github-username>/<your-repo-name>:latest
+```
