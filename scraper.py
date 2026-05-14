@@ -1,91 +1,132 @@
-
 import asyncio
 from playwright.async_api import async_playwright
 import json
-import os
+import logging
 from datetime import datetime
+import os
+import shutil
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 class ChargerScraper:
     def __init__(self, url, provider_name="Erlanger Stadtwerke"):
         self.url = url
         self.provider_name = provider_name
-        self.status_data = {
-            "status": "Unknown",
-            "connectors": [],
-            "last_updated": None,
-            "error": None
-        }
+        self.status_data = {"status": "Unknown", "connectors": [], "last_updated": None, "error": "Not started"}
+        self.user_data_dir = "/tmp/playwright_persistent_session"
 
     async def scrape(self):
         async with async_playwright() as p:
-            # Persistent context helps with maintaining "session" or provider choice if the site uses cookies/localStorage
-            user_data_dir = "/tmp/playwright_user_data_v15"
+            # We don't delete user_data_dir to keep provider selection
             browser_context = await p.chromium.launch_persistent_context(
-                user_data_dir,
+                self.user_data_dir,
                 headless=True,
-                viewport={'width': 1280, 'height': 800}
+                viewport={'width': 1280, 'height': 800},
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
             )
             page = await browser_context.new_page()
 
             try:
-                print(f"[{datetime.now()}] Loading {self.url}...")
+                logger.info(f"Navigating to {self.url}")
                 await page.goto(self.url, wait_until="load", timeout=60000)
+                await page.wait_for_timeout(5000)
 
-                # Wait for provider selection if it appears
-                try:
-                    await page.wait_for_selector('ion-title:has-text("PROVIDER")', timeout=10000)
-                    print(f"[{datetime.now()}] Provider selection detected. Selecting {self.provider_name}...")
-                    await page.evaluate(f"""
-                        (providerName) => {{
-                            const items = document.querySelectorAll('ion-item');
-                            for (const item of items) {{
-                                if (item.innerText.includes(providerName)) {{
-                                    item.click();
-                                    return true;
-                                }}
+                title = await page.evaluate("() => document.querySelector('ion-title') ? document.querySelector('ion-title').innerText : ''")
+                logger.info(f"Page Title: {title}")
+
+                if "PROVIDER" in title:
+                    logger.info("Provider selection screen detected.")
+                    await page.evaluate("() => document.querySelectorAll('ion-backdrop, ion-loading').forEach(el => el.remove())")
+                    try:
+                        await page.click(f"ion-item:has-text('{self.provider_name}')", force=True, timeout=5000)
+                        logger.info(f"Clicked '{self.provider_name}'.")
+                        await page.wait_for_timeout(5000)
+                    except:
+                        logger.warning("Click failed, trying JS fallback.")
+                        await page.evaluate(f"""
+                            (name) => {{
+                                const items = Array.from(document.querySelectorAll('ion-item'));
+                                const target = items.find(i => i.innerText && i.innerText.includes(name));
+                                if (target) target.click();
                             }}
-                            return false;
-                        }}
-                    """, self.provider_name)
-                    await page.wait_for_timeout(5000)
-                    # Reload as suggested by user for 2nd load behavior
-                    await page.goto(self.url, wait_until="load", timeout=60000)
-                except:
-                    print(f"[{datetime.now()}] Provider selection not seen or already selected.")
+                        """, self.provider_name)
+                        await page.wait_for_timeout(5000)
 
-                # Wait for actual content
-                print(f"[{datetime.now()}] Waiting for connector data...")
-                # We search for ion-items that contain status words
+                    # Force navigation to target URL again after selection
+                    logger.info("Reloading target URL after provider selection...")
+                    await page.goto(self.url, wait_until="load")
+                    await page.wait_for_timeout(10000)
+
+                # If we landed on INTRODUCTION or other page, try navigating to the target again
+                # but only if we are not already seeing the data.
+
                 found_connectors = []
-                for _ in range(12): # 60 seconds
-                    items = await page.query_selector_all('ion-item')
-                    for item in items:
-                        text = await item.inner_text()
-                        if any(s in text for s in ["Verfügbar", "Besetzt", "Available", "Occupied"]):
-                            status = "Available" if ("Verfügbar" in text or "Available" in text) else "Occupied"
-                            ctype = "Type 2" if "Typ 2" in text else "CCS" if "CCS" in text else "Unknown"
-                            if not any(c['raw'] == text.strip().replace('\n', ' ') for c in found_connectors):
-                                found_connectors.append({
-                                    "type": ctype,
-                                    "status": status,
-                                    "raw": text.strip().replace('\n', ' ')
-                                })
-                    if found_connectors:
-                        break
+                for attempt in range(1, 11):
+                    logger.info(f"Attempt {attempt}: Extracting data...")
+
+                    # Re-check URL if we got diverted
+                    if "details" not in page.url and attempt > 1:
+                        logger.info(f"URL diverted to {page.url}. Re-navigating to {self.url}...")
+                        await page.goto(self.url, wait_until="load")
+                        await page.wait_for_timeout(5000)
+
+                    connectors = await page.evaluate("""
+                        () => {
+                            const results = [];
+                            function walk(node) {
+                                if (node.innerText && node.innerText.includes('DE*LVP')) {
+                                    const text = node.innerText;
+                                    const idMatch = text.match(/DE\\*LVP\\*[^*\\s\\n]*/);
+                                    if (idMatch) {
+                                        const id = idMatch[0];
+                                        let status = "Unknown";
+                                        if (text.includes('1/1') || text.includes('AVAILABLE') || text.includes('Verfügbar')) {
+                                            status = "Available";
+                                        } else if (text.includes('0/1') || text.includes('OCCUPIED') || text.includes('Besetzt')) {
+                                            status = "Occupied";
+                                        }
+
+                                        let type = "Unknown";
+                                        if (text.includes('Typ 2') || text.includes('Typ2')) type = "Type 2";
+                                        else if (text.includes('CCS')) type = "CCS";
+
+                                        results.push({ id, status, type });
+                                    }
+                                }
+                                if (node.shadowRoot) walk(node.shadowRoot);
+                                for (const child of node.childNodes || []) {
+                                    if (child.nodeType === 1) walk(child);
+                                }
+                            }
+                            walk(document.body);
+                            return results;
+                        }
+                    """)
+
+                    if connectors:
+                        unique = {}
+                        for c in connectors:
+                            cid = c['id']
+                            if cid not in unique or (unique[cid]['status'] == 'Unknown' and c['status'] != 'Unknown'):
+                                unique[cid] = c
+                        found_connectors = list(unique.values())
+                        if found_connectors:
+                            break
+
                     await page.wait_for_timeout(5000)
 
                 if found_connectors:
-                    self.status_data["status"] = "OK"
                     self.status_data["connectors"] = found_connectors
+                    self.status_data["status"] = "OK"
                     self.status_data["error"] = None
+                    logger.info(f"Success: {len(found_connectors)} connectors found.")
                 else:
-                    self.status_data["status"] = "Unknown"
-                    self.status_data["error"] = "Could not find connector status on page."
-                    # Debug save
-                    await page.screenshot(path="latest_fail.png")
+                    self.status_data["error"] = "Data not found in DOM."
+                    await page.screenshot(path="scrape_fail.png")
 
             except Exception as e:
-                self.status_data["status"] = "Unknown"
+                logger.error(f"Scraper error: {e}")
                 self.status_data["error"] = str(e)
             finally:
                 self.status_data["last_updated"] = datetime.now().isoformat()
@@ -94,6 +135,5 @@ class ChargerScraper:
         return self.status_data
 
 if __name__ == "__main__":
-    scraper = ChargerScraper('https://ladeverbundplus.chargecloud.de/#/location/details/DE/LVP/3411583')
-    result = asyncio.run(scraper.scrape())
-    print(json.dumps(result, indent=2))
+    scraper = ChargerScraper("https://ladeverbundplus.chargecloud.de/#/location/details/DE/LVP/3411583")
+    print(json.dumps(asyncio.run(scraper.scrape()), indent=2))

@@ -1,30 +1,28 @@
-# Charging Station Scraper
+# Charger Status Scraper & Backend
 
-A small backend to scrape the status of a specific charging station from ChargeCloud and display it via a simple HTML frontend or a JSON API.
+A small FastAPI backend that scrapes the ChargeCloud website for a specific charging station's status and provides a JSON API and a simple web frontend.
 
 ## Features
-- Scrapes charging status every 5 minutes (configurable).
-- Handles "Erlanger Stadtwerke" provider selection.
-- Provides a JSON endpoint at `/status` for FHEM integration.
-- Simple HTML frontend at `/`.
+- Scrapes the highly dynamic Ionic/Angular SPA using Playwright.
+- Handles provider selection automatically.
+- Provides a `/status` JSON endpoint for home automation (e.g., FHEM).
+- Simple HTML frontend showing the current status.
 - Dockerized for easy deployment on a Raspberry Pi.
 
-## Configuration
-Use the following environment variables:
-- `SCRAPE_INTERVAL`: Interval in seconds (default: 300).
-- `STATION_URL`: URL of the charging station.
-- `PROVIDER_NAME`: Name of the provider to select (default: "Erlanger Stadtwerke").
+## Environment Variables
+- `SCRAPE_INTERVAL`: Interval in seconds between scrapes (default: 300).
+- `STATION_URL`: The URL of the charging station on ChargeCloud.
+- `PROVIDER_NAME`: The name of the provider to select (default: "Erlanger Stadtwerke").
 
-## Running with Docker
+## Running locally
+1. Install dependencies: `pip install -r requirements.txt`
+2. Install Playwright browsers: `playwright install chromium`
+3. Start the server: `python main.py`
+
+## Docker
+The image is built and pushed to GHCR via GitHub Actions.
+To run manually:
 ```bash
-docker build -t charger-scraper .
-docker run -d -p 8000:8000 --name charger-scraper charger-scraper
-```
-
-## GitHub Actions
-This repository includes a GitHub Action to automatically build and publish the Docker image to GitHub Container Registry (GHCR) on every push to the main branch.
-
-To pull the latest image:
-```bash
-docker pull ghcr.io/<your-github-username>/<your-repo-name>:latest
+docker build -t charger-status .
+docker run -p 8000:8000 charger-status
 ```

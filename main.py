@@ -1,16 +1,11 @@
-
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
+from contextlib import asynccontextmanager
 import asyncio
 import os
 from scraper import ChargerScraper
 from datetime import datetime
-import threading
-import time
-
-app = FastAPI()
-templates = Jinja2Templates(directory="templates")
 
 # Global state
 charger_status = {
@@ -41,9 +36,20 @@ async def update_status():
 
         await asyncio.sleep(SCRAPE_INTERVAL)
 
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(update_status())
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Start background task
+    task = asyncio.create_task(update_status())
+    yield
+    # Shutdown: Cancel background task
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+app = FastAPI(lifespan=lifespan)
+templates = Jinja2Templates(directory="templates")
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
