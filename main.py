@@ -47,11 +47,14 @@ async def startup_event():
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
-    return templates.TemplateResponse("index.html", {
-        "request": request,
-        "data": charger_status,
-        "now": datetime.now().isoformat()
-    })
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={
+            "data": charger_status,
+            "now": datetime.now().isoformat()
+        }
+    )
 
 @app.get("/status")
 async def get_status():
