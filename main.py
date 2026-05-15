@@ -7,12 +7,14 @@ import os
 from scraper import ChargerScraper
 from datetime import datetime
 
+VERSION = "1.0.0"
+
 # Global state
 charger_status = {
-    "status": "Unknown",
+    "status": "Starting",
     "connectors": [],
     "last_updated": None,
-    "error": "Initializing..."
+    "error": "Start up phase"
 }
 
 SCRAPE_INTERVAL = int(os.getenv("SCRAPE_INTERVAL", 300))
@@ -58,13 +60,16 @@ async def read_root(request: Request):
         name="index.html",
         context={
             "data": charger_status,
-            "now": datetime.now().isoformat()
+            "now": datetime.now().isoformat(),
+            "version": VERSION
         }
     )
 
 @app.get("/status")
 async def get_status():
-    return JSONResponse(content=charger_status)
+    status_with_version = charger_status.copy()
+    status_with_version["version"] = VERSION
+    return JSONResponse(content=status_with_version)
 
 if __name__ == "__main__":
     import uvicorn

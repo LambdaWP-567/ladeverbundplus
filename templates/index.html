@@ -14,14 +14,53 @@
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
         .status-OK { color: #333; }
-        .status-Unknown { color: red; font-size: 48px; font-weight: bold; }
+        .status-Starting { color: #007bff; font-weight: bold; padding: 20px 0; }
+        .status-Unknown { color: red; font-size: 32px; font-weight: bold; }
         .connector { border-top: 1px solid #eee; padding: 15px 0; margin-top: 10px; text-align: left; }
         .connector-info { font-family: monospace; font-size: 1.1em; color: #333; }
         .available { color: green; font-weight: bold; }
         .occupied { color: orange; font-weight: bold; }
-        .error { color: #888; font-size: 12px; margin-top: 20px; }
+        .error { color: #888; font-size: 14px; margin-top: 20px; }
         .last-updated { font-size: 14px; color: #666; margin-top: 20px; border-top: 1px solid #ddd; padding-top: 10px; }
+        .footer { font-size: 11px; color: #888; margin-top: 10px; }
+
+        .api-info {
+            margin-top: 20px;
+            padding: 10px;
+            background: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            text-align: left;
+            font-size: 12px;
+        }
+        .api-url {
+            font-family: monospace;
+            background: #eee;
+            padding: 2px 5px;
+            word-break: break-all;
+        }
+        .copy-btn {
+            cursor: pointer;
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 3px 8px;
+            border-radius: 3px;
+            float: right;
+            font-size: 10px;
+        }
+        .copy-btn:hover { background: #0056b3; }
     </style>
+    <script>
+        function copyToClipboard() {
+            const url = window.location.origin + "/status";
+            navigator.clipboard.writeText(url).then(() => {
+                const btn = document.getElementById("copyBtn");
+                btn.innerText = "Copied!";
+                setTimeout(() => { btn.innerText = "Copy URL"; }, 2000);
+            });
+        }
+    </script>
 </head>
 <body>
     <div class="status-box">
@@ -37,6 +76,10 @@
                     </div>
                 {% endfor %}
             </div>
+        {% elif data.status == "Starting" %}
+            <div class="status-Starting">
+                🚀 Start up phase...
+            </div>
         {% else %}
             <div class="status-Unknown">UNKNOWN</div>
             {% if data.error %}
@@ -44,12 +87,23 @@
             {% endif %}
         {% endif %}
 
+        <div class="api-info">
+            <strong>Home Automation API:</strong>
+            <button id="copyBtn" class="copy-btn" onclick="copyToClipboard()">Copy URL</button>
+            <br>
+            <span id="apiUrl" class="api-url">/status</span>
+        </div>
+
         <div class="last-updated">
             Last Updated: {{ data.last_updated or "Never" }}
         </div>
-        <div style="font-size: 10px; color: #ccc; margin-top: 5px;">
-            Current Server Time: {{ now }}
+        <div class="footer">
+            <strong>Version: {{ version }}</strong><br>
+            Server Time: {{ now }}
         </div>
     </div>
+    <script>
+        document.getElementById("apiUrl").innerText = window.location.origin + "/status";
+    </script>
 </body>
 </html>
