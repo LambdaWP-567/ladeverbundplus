@@ -16,7 +16,7 @@
         .status-OK { color: #333; }
         .status-Unknown { color: red; font-size: 48px; font-weight: bold; }
         .connector { border-top: 1px solid #eee; padding: 15px 0; margin-top: 10px; text-align: left; }
-        .connector-id { font-family: monospace; font-size: 1.1em; color: #555; }
+        .connector-info { font-family: monospace; font-size: 1.1em; color: #333; }
         .available { color: green; font-weight: bold; }
         .occupied { color: orange; font-weight: bold; }
         .error { color: #888; font-size: 12px; margin-top: 20px; }
@@ -31,10 +31,8 @@
             <div class="status-OK">
                 {% for connector in data.connectors %}
                     <div class="connector">
-                        <div class="connector-id">{{ connector.id }}</div>
-                        <div>
-                            <strong>{{ connector.type }}</strong>:
-                            <span class="{{ connector.status|lower }}">{{ connector.status }}</span>
+                        <div class="connector-info">
+                            {{ connector.id }}: <span class="{{ connector.status|lower }}">{{ connector.status }}</span>
                         </div>
                     </div>
                 {% endfor %}
