@@ -38,64 +38,57 @@ class ChargerScraper:
 
             try:
                 self._log(f"Navigating to {self.url}")
-                await page.goto(self.url, wait_until="load", timeout=60000)
+                await page.goto(self.url, wait_until="load", timeout=90000)
                 await asyncio.sleep(10)
 
-                # Double load trick
-                self._log("Performing double-load for SPA hydration...")
-                await page.goto(self.url, wait_until="load", timeout=60000)
-                await asyncio.sleep(15)
-
-                # Check for redirects or blocking screens
-                current_url = page.url
-                self._log(f"Current URL after load: {current_url}")
-
-                if "/home" in current_url or "/search" in current_url:
-                    self._log("Detected redirect to home/search. Re-navigating to details...")
+                # Persistence check
+                for _ in range(3):
+                    self._log("Checking page state...")
                     await page.goto(self.url, wait_until="load")
                     await asyncio.sleep(15)
 
-                # Dismiss overlays
-                for i in range(3):
-                    self._log(f"Checking for overlays (Attempt {i+1})...")
-                    overlay_clicked = await page.evaluate("""
+                    # Remove persistent loading overlays
+                    await page.evaluate("""
                         () => {
-                            const words = ["Verstanden", "OK", "Zustimmen", "Accept", "Schließen", "Close", "Annehmen"];
-                            let found = null;
-                            function search(root) {
-                                if (found) return;
-                                const els = Array.from(root.querySelectorAll('button, ion-button, .button, span, div[role="button"]'));
-                                for (const el of els) {
-                                    if (words.some(w => el.innerText && el.innerText.trim().includes(w))) {
-                                        const style = window.getComputedStyle(el);
-                                        if (style.display !== 'none' && style.visibility !== 'hidden') {
-                                            el.click();
-                                            found = el.innerText;
-                                            return;
-                                        }
-                                    }
-                                }
-                                Array.from(root.querySelectorAll('*')).forEach(child => {
-                                    if (child.shadowRoot) search(child.shadowRoot);
-                                });
-                            }
-                            search(document.body);
-                            return found;
+                            const spinners = document.querySelectorAll('ion-loading, ion-backdrop, .loading-wrapper, ion-spinner');
+                            spinners.forEach(s => s.remove());
+                            document.body.classList.remove('modal-open');
                         }
                     """)
-                    if overlay_clicked:
-                        self._log(f"Clicked overlay button: {overlay_clicked}")
-                        await asyncio.sleep(5)
-                    else:
+
+                    title = await page.evaluate("() => document.querySelector('ion-title') ? document.querySelector('ion-title').innerText : ''")
+                    if "PROVIDER" in title or "Anbieter" in title:
+                        self._log("Provider selection screen detected.")
+                        await page.evaluate("""
+                            (name) => {
+                                function findAndClick(root) {
+                                    const items = Array.from(root.querySelectorAll('ion-item, ion-label, div'));
+                                    const target = items.find(i => i.innerText && i.innerText.includes(name));
+                                    if (target) { target.click(); return true; }
+                                    const children = Array.from(root.querySelectorAll('*'));
+                                    for (const child of children) {
+                                        if (child.shadowRoot && findAndClick(child.shadowRoot)) return true;
+                                    }
+                                    return false;
+                                }
+                                findAndClick(document.body);
+                            }
+                        """, self.provider_name)
+                        await asyncio.sleep(10)
+                        continue
+
+                    # If we see "STANDORT-DETAILS" (from user screenshot), we are likely there
+                    details_visible = await page.evaluate("() => document.body.innerText.includes('STANDORT-DETAILS')")
+                    if details_visible:
+                        self._log("Details page seems loaded.")
                         break
 
-                # Extraction loop
+                    self._log("Still waiting for details content...")
+                    await asyncio.sleep(5)
+
                 found_connectors = []
                 for attempt in range(1, 10):
                     self._log(f"Extraction Attempt {attempt}...")
-
-                    if self.verbose:
-                        await page.screenshot(path=f"debug_attempt_{attempt}.png")
 
                     connectors = await page.evaluate("""
                         () => {
@@ -122,8 +115,7 @@ class ChargerScraper:
 
                                             let contextText = "";
                                             let curr = node.parentElement;
-                                            // Broad context search
-                                            for (let i = 0; i < 30; i++) {
+                                            for (let i = 0; i < 40; i++) {
                                                 if (!curr) break;
                                                 contextText += " " + (curr.innerText || "");
                                                 curr = curr.parentElement;
@@ -133,13 +125,10 @@ class ChargerScraper:
                                             const availTerms = ['1/1', '1 / 1', 'Verfügbar', 'AVAILABLE', 'FREE', 'FREI'];
                                             const busyTerms = ['0/1', '0 / 1', 'Besetzt', 'OCCUPIED', 'BELEGT', 'In Use', 'In Gebrauch'];
 
-                                            if (availTerms.some(t => contextText.includes(t))) {
-                                                status = "Available";
-                                            } else if (busyTerms.some(t => contextText.includes(t))) {
-                                                status = "Occupied";
-                                            }
+                                            if (availTerms.some(t => contextText.includes(t))) status = "Available";
+                                            else if (busyTerms.some(t => contextText.includes(t))) status = "Occupied";
 
-                                            results.push({ id, status, context: contextText.length });
+                                            results.push({ id, status });
                                             seenIds.add(id);
                                         }
                                     }
@@ -153,13 +142,10 @@ class ChargerScraper:
                     if connectors:
                         valid = [c for c in connectors if len(c['id'].split('*')) >= 4]
                         if valid:
-                            # Prioritize connectors with known status
                             found_connectors = valid
                             if any(c['status'] != 'Unknown' for c in valid):
                                 self._log(f"Found {len(valid)} connectors with status.")
                                 break
-                            else:
-                                self._log(f"Found {len(valid)} IDs but status is still Unknown. Retrying...")
 
                     await asyncio.sleep(5)
 
@@ -167,11 +153,8 @@ class ChargerScraper:
                     self.status_data["connectors"] = sorted(found_connectors, key=lambda x: x['id'])
                     self.status_data["status"] = "OK"
                     self.status_data["error"] = None
-                    self._log(f"Scrape successful: {len(found_connectors)} connectors found.")
                 else:
-                    self.status_data["error"] = "Data not found or incomplete."
-                    self._log("Scrape failed: Data not found.", logging.WARNING)
-                    await page.screenshot(path="scrape_failure_final.png")
+                    self.status_data["error"] = "Data not found. Layout might have changed."
 
             except Exception as e:
                 self._log(f"Scraper error: {e}", logging.ERROR)

@@ -5,6 +5,7 @@ import sys
 
 async def main():
     verbose = os.getenv("VERBOSE_LOGGING", "false").lower() == "true"
+    # Default test ID
     url = "https://ladeverbundplus.chargecloud.de/#/location/details/DE/LVP/3411583"
     scraper = ChargerScraper(url, verbose=verbose)
     print(f"Starting test scrape for {url} (verbose={verbose})...")
