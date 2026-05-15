@@ -1,114 +1,140 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Charger Status</title>
+    <title>Charger Status Dashboard</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="refresh" content="60">
     <style>
-        body { font-family: sans-serif; text-align: center; padding: 20px; background-color: #f4f4f4; }
-        .status-box {
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; padding: 20px; background-color: #e9ecef; color: #495057; }
+        .container { max-width: 800px; margin: 0 auto; }
+        .card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
             padding: 20px;
-            border-radius: 10px;
-            display: inline-block;
-            min-width: 350px;
-            background-color: white;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        }
-        .status-OK { color: #333; }
-        .status-Starting { color: #007bff; font-weight: bold; padding: 20px 0; }
-        .status-Unknown { color: red; font-size: 32px; font-weight: bold; }
-        .connector { border-top: 1px solid #eee; padding: 15px 0; margin-top: 10px; text-align: left; }
-        .connector-info { font-family: monospace; font-size: 1.1em; color: #333; }
-        .available { color: green; font-weight: bold; }
-        .occupied { color: orange; font-weight: bold; }
-        .error { color: #888; font-size: 14px; margin-top: 20px; }
-        .last-updated { font-size: 14px; color: #666; margin-top: 20px; border-top: 1px solid #ddd; padding-top: 10px; }
-        .footer { font-size: 11px; color: #888; margin-top: 10px; }
-
-        .api-info {
-            margin-top: 20px;
-            padding: 10px;
-            background: #f9f9f9;
-            border: 1px solid #ddd;
-            border-radius: 5px;
+            margin-bottom: 20px;
             text-align: left;
-            font-size: 12px;
         }
-        .api-url {
-            font-family: monospace;
-            background: #eee;
-            padding: 2px 5px;
-            word-break: break-all;
-        }
-        .copy-btn, .refresh-btn {
-            cursor: pointer;
-            background: #007bff;
-            color: white;
-            border: none;
-            padding: 5px 10px;
-            border-radius: 3px;
-            font-size: 10px;
-            text-decoration: none;
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        h1 { margin: 0; color: #212529; }
+
+        .station-header { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid #f1f3f5; padding-bottom: 8px; margin-bottom: 15px; }
+        .station-id { font-weight: bold; font-size: 1.2em; color: #007bff; }
+
+        .connector { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #f1f3f5; }
+        .connector:last-child { border-bottom: none; }
+        .connector-id { font-family: 'Courier New', Courier, monospace; color: #6c757d; }
+
+        .status-badge { padding: 4px 10px; border-radius: 20px; font-size: 0.85em; font-weight: bold; text-transform: uppercase; }
+        .available { background-color: #d4edda; color: #155724; }
+        .occupied { background-color: #fff3cd; color: #856404; }
+        .unknown { background-color: #e2e3e5; color: #383d41; }
+        .error { background-color: #f8d7da; color: #721c24; }
+
+        .spinner {
             display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(0,123,255,.3);
+            border-radius: 50%;
+            border-top-color: #007bff;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 10px;
+            vertical-align: middle;
         }
-        .refresh-btn { background: #28a745; margin-bottom: 10px; }
-        .copy-btn:hover { background: #0056b3; }
-        .refresh-btn:hover { background: #218838; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .btn {
+            padding: 8px 16px; border-radius: 6px; border: none; cursor: pointer; font-weight: 600; text-decoration: none; display: inline-block; transition: background 0.2s;
+        }
+        .btn-refresh { background-color: #28a745; color: white; }
+        .btn-refresh:hover { background-color: #218838; }
+        .btn-remove { background-color: #dc3545; color: white; font-size: 0.8em; padding: 4px 8px; }
+        .btn-remove:hover { background-color: #c82333; }
+        .btn-add { background-color: #007bff; color: white; margin-top: 10px; width: 100%; }
+
+        .form-group { margin-top: 20px; text-align: left; }
+        .form-control { width: 100%; padding: 10px; border: 1px solid #ced4da; border-radius: 6px; box-sizing: border-box; }
+        .guidance { font-size: 0.85em; color: #6c757d; margin-top: 8px; }
+
+        .footer { margin-top: 30px; font-size: 0.8em; color: #adb5bd; }
+
+        .loading-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255,255,255,0.7); display: none; justify-content: center; align-items: center; z-index: 1000;
+        }
+        .loading-overlay.active { display: flex; }
     </style>
-    <script>
-        function copyToClipboard() {
-            const url = window.location.origin + "/status";
-            navigator.clipboard.writeText(url).then(() => {
-                const btn = document.getElementById("copyBtn");
-                btn.innerText = "Copied!";
-                setTimeout(() => { btn.innerText = "Copy URL"; }, 2000);
-            });
-        }
-    </script>
 </head>
 <body>
-    <div class="status-box">
-        <h1>Charger Status</h1>
-
-        <a href="/refresh" class="refresh-btn">🔄 Manual Refresh</a>
-
-        {% if data.status == "OK" %}
-            <div class="status-OK">
-                {% for connector in data.connectors %}
-                    <div class="connector">
-                        <div class="connector-info">
-                            {{ connector.id }}: <span class="{{ connector.status|lower }}">{{ connector.status }}</span>
-                        </div>
-                    </div>
-                {% endfor %}
-            </div>
-        {% elif data.status == "Starting" %}
-            <div class="status-Starting">
-                🚀 Start up phase...
-            </div>
-        {% else %}
-            <div class="status-Unknown">UNKNOWN</div>
-            {% if data.error %}
-                <div class="error">Error: {{ data.error }}</div>
-            {% endif %}
-        {% endif %}
-
-        <div class="api-info">
-            <strong>Home Automation API:</strong>
-            <button id="copyBtn" class="copy-btn" style="float: right;" onclick="copyToClipboard()">Copy URL</button>
-            <br>
-            <span id="apiUrl" class="api-url">/status</span>
-        </div>
-
-        <div class="last-updated">
-            Last Updated: {{ data.last_updated | german_ts }}
-        </div>
-        <div class="footer">
-            <strong>Version: {{ version }}</strong>
+    <div id="loadingOverlay" class="loading-overlay">
+        <div style="text-align: center;">
+            <div class="spinner" style="width: 50px; height: 50px; border-width: 5px;"></div>
+            <p><strong>Updating Charger Data...</strong></p>
         </div>
     </div>
-    <script>
-        document.getElementById("apiUrl").innerText = window.location.origin + "/status";
-    </script>
+
+    <div class="container">
+        <div class="header">
+            <h1>Charger Status</h1>
+            <a href="/refresh" class="btn btn-refresh" onclick="document.getElementById('loadingOverlay').classList.add('active')">
+                Refresh All
+            </a>
+        </div>
+
+        {% if is_scraping %}
+        <div style="margin-bottom: 15px; color: #007bff;">
+            <div class="spinner"></div> Scraping in progress...
+        </div>
+        {% endif %}
+
+        {% for sid, data in charger_data.items() %}
+        <div class="card">
+            <div class="station-header">
+                <div>
+                    <span class="station-id">Station {{ sid }}</span>
+                    <div style="font-size: 0.7em; color: #adb5bd;">
+                        Updated: {{ data.last_updated | german_ts }}
+                    </div>
+                </div>
+                <a href="/remove/{{ sid }}" class="btn btn-remove" onclick="return confirm('Remove this station?')">Remove</a>
+            </div>
+
+            {% if data.status == "OK" %}
+                {% for conn in data.connectors %}
+                <div class="connector">
+                    <span class="connector-id">{{ conn.id }}</span>
+                    <span class="status-badge {{ conn.status | lower }}">{{ conn.status }}</span>
+                </div>
+                {% endfor %}
+            {% elif data.status == "Starting" %}
+                <div style="color: #007bff;">🚀 Start up / Scraping...</div>
+            {% else %}
+                <div class="status-badge error" style="display: block; text-align: center;">
+                    {{ data.status }}: {{ data.error }}
+                </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+
+        <div class="card">
+            <h3>Add New Charger</h3>
+            <form action="/add" method="post" onsubmit="document.getElementById('loadingOverlay').classList.add('active')">
+                <div class="form-group">
+                    <label for="station_id">Station ID (Number)</label>
+                    <input type="text" name="station_id" id="station_id" class="form-control" placeholder="e.g. 3290015" required>
+                    <div class="guidance">
+                        <strong>Guidance:</strong> Open the station on the website. The Station ID is the <strong>number at the end of the URL</strong>.<br>
+                        Example: <code>.../details/DE/LVP/<strong>3290015</strong></code>
+                    </div>
+                    <button type="submit" class="btn btn-add">Add and Scrape</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="footer">
+            Version: {{ version }} | Scrape Interval: {{ (charger_data.keys()|list|length * 60) if is_scraping else "Auto" }}
+        </div>
+    </div>
 </body>
 </html>

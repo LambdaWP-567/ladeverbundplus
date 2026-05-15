@@ -31,13 +31,52 @@ class ChargerScraper:
                 await page.goto(self.url, wait_until="load", timeout=60000)
                 await asyncio.sleep(10)
 
-                # Second load
+                # Check for redirects
+                if "/home" in page.url or "/search" in page.url:
+                    logger.info("Redirected to home/search. Re-navigating...")
+                    await page.goto(self.url, wait_until="load")
+                    await asyncio.sleep(10)
+
+                # Double load
                 await page.goto(self.url, wait_until="load", timeout=60000)
-                await asyncio.sleep(10)
+                await asyncio.sleep(15)
+
+                # Handle overlays
+                for _ in range(3):
+                    overlay_clicked = await page.evaluate("""
+                        () => {
+                            const words = ["Verstanden", "OK", "Zustimmen", "Accept", "Schließen", "Close", "Annehmen"];
+                            let found = false;
+                            function search(root) {
+                                if (found) return;
+                                const els = Array.from(root.querySelectorAll('button, ion-button, .button, span, div[role="button"]'));
+                                for (const el of els) {
+                                    if (words.some(w => el.innerText && el.innerText.trim().includes(w))) {
+                                        const style = window.getComputedStyle(el);
+                                        if (style.display !== 'none' && style.visibility !== 'hidden') {
+                                            el.click();
+                                            found = true;
+                                            return;
+                                        }
+                                    }
+                                }
+                                Array.from(root.querySelectorAll('*')).forEach(child => {
+                                    if (child.shadowRoot) search(child.shadowRoot);
+                                });
+                            }
+                            search(document.body);
+                            return found;
+                        }
+                    """)
+                    if overlay_clicked:
+                        logger.info("Clicked an overlay button.")
+                        await asyncio.sleep(5)
+                    else:
+                        break
 
                 # Extraction
                 found_connectors = []
-                for attempt in range(1, 6):
+                for attempt in range(1, 8):
                     logger.info(f"Extraction Attempt {attempt}...")
 
                     connectors = await page.evaluate("""
@@ -47,64 +86,45 @@ class ChargerScraper:
                             const seenIds = new Set();
 
                             function search(root) {
-                                // Try finding containers first (ion-item, ion-card)
-                                const containers = Array.from(root.querySelectorAll('ion-item, ion-card, .item-inner, .list-item'));
-                                for (const container of containers) {
-                                    const text = container.innerText || "";
+                                // Depth-first traversal into shadows
+                                const els = Array.from(root.querySelectorAll('*'));
+                                for (const el of els) {
+                                    if (el.shadowRoot) search(el.shadowRoot);
+                                }
+
+                                const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+                                let node;
+                                while (node = walker.nextNode()) {
+                                    const text = node.textContent;
                                     const matches = text.match(idRegex);
                                     if (matches) {
                                         for (let id of matches) {
                                             id = id.trim().replace(/[^A-Z0-9\\*]$/, '');
-                                            if (seenIds.has(id)) continue;
+                                            if (seenIds.has(id) || id.length < 10) continue;
+
+                                            let contextText = "";
+                                            let curr = node.parentElement;
+                                            for (let i = 0; i < 20; i++) {
+                                                if (!curr) break;
+                                                contextText += " " + (curr.innerText || "");
+                                                curr = curr.parentElement;
+                                            }
 
                                             let status = "Unknown";
-                                            if (text.includes('1/1') || text.includes('Verfügbar') || text.includes('AVAILABLE')) {
+                                            const availTerms = ['1/1', '1 / 1', 'Verfügbar', 'AVAILABLE', 'FREE'];
+                                            const busyTerms = ['0/1', '0 / 1', 'Besetzt', 'OCCUPIED', 'BELEGT', 'In Use'];
+
+                                            if (availTerms.some(t => contextText.includes(t))) {
                                                 status = "Available";
-                                            } else if (text.includes('0/1') || text.includes('Besetzt') || text.includes('OCCUPIED') || text.includes('Belegt')) {
+                                            } else if (busyTerms.some(t => contextText.includes(t))) {
                                                 status = "Occupied";
                                             }
+
                                             results.push({ id, status });
                                             seenIds.add(id);
                                         }
                                     }
                                 }
-
-                                // Fallback to text nodes
-                                if (results.length === 0) {
-                                    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
-                                    let node;
-                                    while (node = walker.nextNode()) {
-                                        const text = node.textContent;
-                                        const matches = text.match(idRegex);
-                                        if (matches) {
-                                            for (let id of matches) {
-                                                id = id.trim().replace(/[^A-Z0-9\\*]$/, '');
-                                                if (seenIds.has(id)) continue;
-
-                                                let contextText = "";
-                                                let curr = node.parentElement;
-                                                for (let i = 0; i < 10; i++) {
-                                                    if (!curr) break;
-                                                    contextText += " " + curr.innerText;
-                                                    curr = curr.parentElement;
-                                                }
-
-                                                let status = "Unknown";
-                                                if (contextText.includes('1/1') || contextText.includes('Verfügbar') || contextText.includes('AVAILABLE')) {
-                                                    status = "Available";
-                                                } else if (contextText.includes('0/1') || contextText.includes('Besetzt') || contextText.includes('OCCUPIED') || contextText.includes('Belegt')) {
-                                                    status = "Occupied";
-                                                }
-                                                results.push({ id, status });
-                                                seenIds.add(id);
-                                            }
-                                        }
-                                    }
-                                }
-
-                                Array.from(root.querySelectorAll('*')).forEach(child => {
-                                    if (child.shadowRoot) search(child.shadowRoot);
-                                });
                             }
                             search(document.body);
                             return results;
@@ -112,10 +132,10 @@ class ChargerScraper:
                     """)
 
                     if connectors:
-                        cleaned = [c for c in connectors if len(c['id'].split('*')) >= 4]
-                        if cleaned:
-                            found_connectors = cleaned
-                            if any(c['status'] != 'Unknown' for c in cleaned):
+                        valid = [c for c in connectors if len(c['id'].split('*')) >= 4]
+                        if valid:
+                            found_connectors = valid
+                            if any(c['status'] != 'Unknown' for c in valid):
                                 break
 
                     await asyncio.sleep(5)
@@ -124,10 +144,10 @@ class ChargerScraper:
                     self.status_data["connectors"] = sorted(found_connectors, key=lambda x: x['id'])
                     self.status_data["status"] = "OK"
                     self.status_data["error"] = None
-                    logger.info(f"Success: {self.status_data['connectors']}")
+                    logger.info(f"Successfully scraped: {self.status_data['connectors']}")
                 else:
                     self.status_data["error"] = "Data not found or incomplete."
-                    await page.screenshot(path="debug_extraction.png")
+                    logger.warning("Scrape failed: Data not found.")
 
             except Exception as e:
                 logger.error(f"Scraper error: {e}")
@@ -139,5 +159,7 @@ class ChargerScraper:
         return self.status_data
 
 if __name__ == "__main__":
-    scraper = ChargerScraper("https://ladeverbundplus.chargecloud.de/#/location/details/DE/LVP/3411583")
+    import sys
+    u = sys.argv[1] if len(sys.argv) > 1 else "https://ladeverbundplus.chargecloud.de/#/location/details/DE/LVP/3411583"
+    scraper = ChargerScraper(u)
     print(json.dumps(asyncio.run(scraper.scrape()), indent=2))
