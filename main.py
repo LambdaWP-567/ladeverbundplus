@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from contextlib import asynccontextmanager
 import asyncio
@@ -7,7 +7,7 @@ import os
 from scraper import ChargerScraper
 from datetime import datetime
 
-VERSION = "1.0.1"
+VERSION = "1.0.1 from (15.05.2026)"
 
 # Global state
 charger_status = {
@@ -17,31 +17,34 @@ charger_status = {
     "error": "Start up phase"
 }
 
-SCRAPE_INTERVAL = int(os.getenv("SCRAPE_INTERVAL", 300))
+SCRAPE_INTERVAL = int(os.getenv("SCRAPE_INTERVAL", 60))
 STATION_URL = os.getenv("STATION_URL", "https://ladeverbundplus.chargecloud.de/#/location/details/DE/LVP/3411583")
 PROVIDER_NAME = os.getenv("PROVIDER_NAME", "Erlanger Stadtwerke")
 
-async def update_status():
-    global charger_status
-    scraper = ChargerScraper(STATION_URL, PROVIDER_NAME)
-    while True:
-        try:
-            print(f"[{datetime.now()}] Starting scheduled scrape...")
-            result = await scraper.scrape()
-            charger_status = result
-            print(f"[{datetime.now()}] Scrape completed. Status: {charger_status['status']}")
-        except Exception as e:
-            print(f"[{datetime.now()}] Unexpected error in background task: {e}")
-            charger_status["status"] = "Unknown"
-            charger_status["error"] = str(e)
-            charger_status["last_updated"] = datetime.now().isoformat()
+scraper_instance = ChargerScraper(STATION_URL, PROVIDER_NAME)
 
+async def perform_scrape():
+    global charger_status
+    try:
+        print(f"[{datetime.now()}] Starting scrape...")
+        result = await scraper_instance.scrape()
+        charger_status = result
+        print(f"[{datetime.now()}] Scrape completed. Status: {charger_status['status']}")
+    except Exception as e:
+        print(f"[{datetime.now()}] Unexpected error in scrape: {e}")
+        charger_status["status"] = "Unknown"
+        charger_status["error"] = str(e)
+        charger_status["last_updated"] = datetime.now().isoformat()
+
+async def update_status_loop():
+    while True:
+        await perform_scrape()
         await asyncio.sleep(SCRAPE_INTERVAL)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Start background task
-    task = asyncio.create_task(update_status())
+    task = asyncio.create_task(update_status_loop())
     yield
     # Shutdown: Cancel background task
     task.cancel()
@@ -81,6 +84,11 @@ async def get_status():
     status_with_version = charger_status.copy()
     status_with_version["version"] = VERSION
     return JSONResponse(content=status_with_version)
+
+@app.get("/refresh")
+async def refresh_data():
+    await perform_scrape()
+    return RedirectResponse(url="/")
 
 if __name__ == "__main__":
     import uvicorn

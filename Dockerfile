@@ -18,7 +18,7 @@ RUN playwright install chromium
 COPY . .
 
 # Environment variables
-ENV SCRAPE_INTERVAL=300
+ENV SCRAPE_INTERVAL=60
 ENV STATION_URL="https://ladeverbundplus.chargecloud.de/#/location/details/DE/LVP/3411583"
 ENV PROVIDER_NAME="Erlanger Stadtwerke"
 

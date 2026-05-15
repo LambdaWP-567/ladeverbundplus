@@ -40,17 +40,20 @@
             padding: 2px 5px;
             word-break: break-all;
         }
-        .copy-btn {
+        .copy-btn, .refresh-btn {
             cursor: pointer;
             background: #007bff;
             color: white;
             border: none;
-            padding: 3px 8px;
+            padding: 5px 10px;
             border-radius: 3px;
-            float: right;
             font-size: 10px;
+            text-decoration: none;
+            display: inline-block;
         }
+        .refresh-btn { background: #28a745; margin-bottom: 10px; }
         .copy-btn:hover { background: #0056b3; }
+        .refresh-btn:hover { background: #218838; }
     </style>
     <script>
         function copyToClipboard() {
@@ -66,6 +69,8 @@
 <body>
     <div class="status-box">
         <h1>Charger Status</h1>
+
+        <a href="/refresh" class="refresh-btn">🔄 Manual Refresh</a>
 
         {% if data.status == "OK" %}
             <div class="status-OK">
@@ -90,7 +95,7 @@
 
         <div class="api-info">
             <strong>Home Automation API:</strong>
-            <button id="copyBtn" class="copy-btn" onclick="copyToClipboard()">Copy URL</button>
+            <button id="copyBtn" class="copy-btn" style="float: right;" onclick="copyToClipboard()">Copy URL</button>
             <br>
             <span id="apiUrl" class="api-url">/status</span>
         </div>

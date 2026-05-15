@@ -29,140 +29,105 @@ class ChargerScraper:
             try:
                 logger.info(f"Navigating to {self.url}")
                 await page.goto(self.url, wait_until="load", timeout=60000)
-                await page.wait_for_timeout(5000)
+                await asyncio.sleep(10)
 
-                # Handle Initial Screens (Cookies, Intro, Provider)
-                for _ in range(3): # Try a few times to clear potential overlays
-                    title = await page.evaluate("() => document.querySelector('ion-title') ? document.querySelector('ion-title').innerText : ''")
-                    logger.info(f"Current Title: {title}")
-
-                    # 1. Detect and click "Verstanden" or "Accept" or "OK" for cookies/intro
-                    clicked_overlay = await page.evaluate("""
-                        () => {
-                            const words = ["Verstanden", "OK", "Zustimmen", "Accept", "Schließen", "Close"];
-                            const buttons = Array.from(document.querySelectorAll('button, ion-button, span, div'))
-                                .filter(el => {
-                                    const style = window.getComputedStyle(el);
-                                    return style.display !== 'none' && style.visibility !== 'hidden';
-                                });
-
-                            for (const btn of buttons) {
-                                if (words.some(w => btn.innerText && btn.innerText.includes(w))) {
-                                    // Check if it's likely a modal button
-                                    const zIndex = window.getComputedStyle(btn).zIndex;
-                                    if (zIndex > 100 || btn.closest('ion-modal') || btn.closest('.modal-wrapper')) {
-                                        btn.click();
-                                        return btn.innerText;
-                                    }
-                                }
-                            }
-                            return null;
-                        }
-                    """)
-                    if clicked_overlay:
-                        logger.info(f"Clicked overlay button: {clicked_overlay}")
-                        await page.wait_for_timeout(2000)
-                        continue
-
-                    # 2. Provider selection
-                    if "PROVIDER" in title:
-                        logger.info("Provider selection screen detected.")
-                        await page.evaluate("() => document.querySelectorAll('ion-backdrop, ion-loading').forEach(el => el.remove())")
-                        try:
-                            await page.click(f"ion-item:has-text('{self.provider_name}')", force=True, timeout=5000)
-                            logger.info(f"Clicked '{self.provider_name}'.")
-                            await page.wait_for_timeout(5000)
-                        except:
-                            await page.evaluate(f"""
-                                (name) => {{
-                                    const items = Array.from(document.querySelectorAll('ion-item'));
-                                    const target = items.find(i => i.innerText && i.innerText.includes(name));
-                                    if (target) target.click();
-                                }}
-                            """, self.provider_name)
-                            await page.wait_for_timeout(5000)
-
-                        logger.info("Reloading target URL after provider selection...")
-                        await page.goto(self.url, wait_until="load")
-                        await page.wait_for_timeout(10000)
-                        continue
-
-                    break # No more known overlays
+                # Second load
+                await page.goto(self.url, wait_until="load", timeout=60000)
+                await asyncio.sleep(10)
 
                 # Extraction
                 found_connectors = []
-                for attempt in range(1, 11):
-                    logger.info(f"Attempt {attempt}: Extracting data...")
-
-                    if "details" not in page.url and attempt > 1:
-                        logger.info(f"URL diverted to {page.url}. Re-navigating to {self.url}...")
-                        await page.goto(self.url, wait_until="load")
-                        await page.wait_for_timeout(5000)
+                for attempt in range(1, 6):
+                    logger.info(f"Extraction Attempt {attempt}...")
 
                     connectors = await page.evaluate("""
                         () => {
                             const results = [];
-                            function walk(node) {
-                                // Search for DE*LVP in the text of this node
-                                if (node.innerText && node.innerText.includes('DE*LVP')) {
-                                    // We look for the most specific element containing the ID to avoid duplicates
-                                    // However, the card contains both the ID and the status.
-                                    // Let's try to find cards or items.
-                                    const text = node.innerText;
-                                    // Regex update: match full ID including multiple stars
-                                    const idMatches = text.match(/DE\\*LVP\\*[^*\\s\\n]+(\\*[^*\\s\\n]+)*/g);
+                            const idRegex = /DE\\*LVP\\*[A-Z0-9\\*]+/g;
+                            const seenIds = new Set();
 
-                                    if (idMatches) {
-                                        for (const id of idMatches) {
+                            function search(root) {
+                                // Try finding containers first (ion-item, ion-card)
+                                const containers = Array.from(root.querySelectorAll('ion-item, ion-card, .item-inner, .list-item'));
+                                for (const container of containers) {
+                                    const text = container.innerText || "";
+                                    const matches = text.match(idRegex);
+                                    if (matches) {
+                                        for (let id of matches) {
+                                            id = id.trim().replace(/[^A-Z0-9\\*]$/, '');
+                                            if (seenIds.has(id)) continue;
+
                                             let status = "Unknown";
-                                            if (text.includes('1/1') || text.includes('AVAILABLE') || text.includes('Verfügbar')) {
+                                            if (text.includes('1/1') || text.includes('Verfügbar') || text.includes('AVAILABLE')) {
                                                 status = "Available";
-                                            } else if (text.includes('0/1') || text.includes('OCCUPIED') || text.includes('Besetzt')) {
+                                            } else if (text.includes('0/1') || text.includes('Besetzt') || text.includes('OCCUPIED') || text.includes('Belegt')) {
                                                 status = "Occupied";
                                             }
-
-                                            let type = "Unknown";
-                                            if (text.includes('Typ 2') || text.includes('Typ2')) type = "Type 2";
-                                            else if (text.includes('CCS')) type = "CCS";
-
-                                            results.push({ id, status, type });
+                                            results.push({ id, status });
+                                            seenIds.add(id);
                                         }
                                     }
                                 }
-                                if (node.shadowRoot) walk(node.shadowRoot);
-                                for (const child of node.childNodes || []) {
-                                    if (child.nodeType === 1) walk(child);
+
+                                // Fallback to text nodes
+                                if (results.length === 0) {
+                                    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+                                    let node;
+                                    while (node = walker.nextNode()) {
+                                        const text = node.textContent;
+                                        const matches = text.match(idRegex);
+                                        if (matches) {
+                                            for (let id of matches) {
+                                                id = id.trim().replace(/[^A-Z0-9\\*]$/, '');
+                                                if (seenIds.has(id)) continue;
+
+                                                let contextText = "";
+                                                let curr = node.parentElement;
+                                                for (let i = 0; i < 10; i++) {
+                                                    if (!curr) break;
+                                                    contextText += " " + curr.innerText;
+                                                    curr = curr.parentElement;
+                                                }
+
+                                                let status = "Unknown";
+                                                if (contextText.includes('1/1') || contextText.includes('Verfügbar') || contextText.includes('AVAILABLE')) {
+                                                    status = "Available";
+                                                } else if (contextText.includes('0/1') || contextText.includes('Besetzt') || contextText.includes('OCCUPIED') || contextText.includes('Belegt')) {
+                                                    status = "Occupied";
+                                                }
+                                                results.push({ id, status });
+                                                seenIds.add(id);
+                                            }
+                                        }
+                                    }
                                 }
+
+                                Array.from(root.querySelectorAll('*')).forEach(child => {
+                                    if (child.shadowRoot) search(child.shadowRoot);
+                                });
                             }
-                            walk(document.body);
+                            search(document.body);
                             return results;
                         }
                     """)
 
                     if connectors:
-                        unique = {}
-                        for c in connectors:
-                            cid = c['id']
-                            # Keep the one with a known status if multiple entries exist
-                            # And avoid shorter partial IDs if we have longer ones (though regex should handle it)
-                            if cid not in unique or (unique[cid]['status'] == 'Unknown' and c['status'] != 'Unknown'):
-                                unique[cid] = c
-                        found_connectors = list(unique.values())
-                        if found_connectors:
-                            # Verify if we found the expected IDs
-                            if any("DE*LVP*E21065*001" in c['id'] for c in found_connectors):
+                        cleaned = [c for c in connectors if len(c['id'].split('*')) >= 4]
+                        if cleaned:
+                            found_connectors = cleaned
+                            if any(c['status'] != 'Unknown' for c in cleaned):
                                 break
 
-                    await page.wait_for_timeout(5000)
+                    await asyncio.sleep(5)
 
                 if found_connectors:
-                    self.status_data["connectors"] = found_connectors
+                    self.status_data["connectors"] = sorted(found_connectors, key=lambda x: x['id'])
                     self.status_data["status"] = "OK"
                     self.status_data["error"] = None
-                    logger.info(f"Success: {len(found_connectors)} connectors found.")
+                    logger.info(f"Success: {self.status_data['connectors']}")
                 else:
-                    self.status_data["error"] = "Data not found in DOM."
-                    await page.screenshot(path="scrape_fail.png")
+                    self.status_data["error"] = "Data not found or incomplete."
+                    await page.screenshot(path="debug_extraction.png")
 
             except Exception as e:
                 logger.error(f"Scraper error: {e}")
