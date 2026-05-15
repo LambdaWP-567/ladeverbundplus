@@ -3,6 +3,7 @@
 <head>
     <title>Charger Status</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="refresh" content="60">
     <style>
         body { font-family: sans-serif; text-align: center; padding: 20px; background-color: #f4f4f4; }
         .status-box {
@@ -95,11 +96,10 @@
         </div>
 
         <div class="last-updated">
-            Last Updated: {{ data.last_updated or "Never" }}
+            Last Updated: {{ data.last_updated | german_ts }}
         </div>
         <div class="footer">
-            <strong>Version: {{ version }}</strong><br>
-            Server Time: {{ now }}
+            <strong>Version: {{ version }}</strong>
         </div>
     </div>
     <script>

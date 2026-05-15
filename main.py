@@ -7,7 +7,7 @@ import os
 from scraper import ChargerScraper
 from datetime import datetime
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 # Global state
 charger_status = {
@@ -52,6 +52,17 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 templates = Jinja2Templates(directory="templates")
+
+def format_timestamp(ts_str):
+    if not ts_str:
+        return "Never"
+    try:
+        dt = datetime.fromisoformat(ts_str)
+        return dt.strftime("%H:%Mh at %d.%m.%Y")
+    except:
+        return ts_str
+
+templates.env.filters["german_ts"] = format_timestamp
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
