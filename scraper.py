@@ -10,11 +10,17 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class ChargerScraper:
-    def __init__(self, url, provider_name="Erlanger Stadtwerke"):
+    def __init__(self, url, provider_name="Erlanger Stadtwerke", verbose=False):
         self.url = url
         self.provider_name = provider_name
+        self.verbose = verbose
         self.status_data = {"status": "Unknown", "connectors": [], "last_updated": None, "error": "Not started"}
         self.user_data_dir = "/tmp/playwright_persistent_session"
+        if self.verbose:
+            logger.setLevel(logging.DEBUG)
+
+    def _log(self, msg, level=logging.INFO):
+        logger.log(level, msg)
 
     async def scrape(self):
         async with async_playwright() as p:
@@ -26,27 +32,36 @@ class ChargerScraper:
             )
             page = await browser_context.new_page()
 
+            if self.verbose:
+                page.on("console", lambda msg: logger.debug(f"BROWSER CONSOLE: {msg.text}"))
+                page.on("requestfailed", lambda req: logger.debug(f"REQUEST FAILED: {req.url} - {req.failure}"))
+
             try:
-                logger.info(f"Navigating to {self.url}")
+                self._log(f"Navigating to {self.url}")
                 await page.goto(self.url, wait_until="load", timeout=60000)
                 await asyncio.sleep(10)
 
-                # Check for redirects
-                if "/home" in page.url or "/search" in page.url:
-                    logger.info("Redirected to home/search. Re-navigating...")
-                    await page.goto(self.url, wait_until="load")
-                    await asyncio.sleep(10)
-
-                # Double load
+                # Double load trick
+                self._log("Performing double-load for SPA hydration...")
                 await page.goto(self.url, wait_until="load", timeout=60000)
                 await asyncio.sleep(15)
 
-                # Handle overlays
-                for _ in range(3):
+                # Check for redirects or blocking screens
+                current_url = page.url
+                self._log(f"Current URL after load: {current_url}")
+
+                if "/home" in current_url or "/search" in current_url:
+                    self._log("Detected redirect to home/search. Re-navigating to details...")
+                    await page.goto(self.url, wait_until="load")
+                    await asyncio.sleep(15)
+
+                # Dismiss overlays
+                for i in range(3):
+                    self._log(f"Checking for overlays (Attempt {i+1})...")
                     overlay_clicked = await page.evaluate("""
                         () => {
                             const words = ["Verstanden", "OK", "Zustimmen", "Accept", "Schließen", "Close", "Annehmen"];
-                            let found = false;
+                            let found = null;
                             function search(root) {
                                 if (found) return;
                                 const els = Array.from(root.querySelectorAll('button, ion-button, .button, span, div[role="button"]'));
@@ -55,7 +70,7 @@ class ChargerScraper:
                                         const style = window.getComputedStyle(el);
                                         if (style.display !== 'none' && style.visibility !== 'hidden') {
                                             el.click();
-                                            found = true;
+                                            found = el.innerText;
                                             return;
                                         }
                                     }
@@ -69,15 +84,18 @@ class ChargerScraper:
                         }
                     """)
                     if overlay_clicked:
-                        logger.info("Clicked an overlay button.")
+                        self._log(f"Clicked overlay button: {overlay_clicked}")
                         await asyncio.sleep(5)
                     else:
                         break
 
-                # Extraction
+                # Extraction loop
                 found_connectors = []
-                for attempt in range(1, 8):
-                    logger.info(f"Extraction Attempt {attempt}...")
+                for attempt in range(1, 10):
+                    self._log(f"Extraction Attempt {attempt}...")
+
+                    if self.verbose:
+                        await page.screenshot(path=f"debug_attempt_{attempt}.png")
 
                     connectors = await page.evaluate("""
                         () => {
@@ -104,15 +122,16 @@ class ChargerScraper:
 
                                             let contextText = "";
                                             let curr = node.parentElement;
-                                            for (let i = 0; i < 20; i++) {
+                                            // Broad context search
+                                            for (let i = 0; i < 30; i++) {
                                                 if (!curr) break;
                                                 contextText += " " + (curr.innerText || "");
                                                 curr = curr.parentElement;
                                             }
 
                                             let status = "Unknown";
-                                            const availTerms = ['1/1', '1 / 1', 'Verfügbar', 'AVAILABLE', 'FREE'];
-                                            const busyTerms = ['0/1', '0 / 1', 'Besetzt', 'OCCUPIED', 'BELEGT', 'In Use'];
+                                            const availTerms = ['1/1', '1 / 1', 'Verfügbar', 'AVAILABLE', 'FREE', 'FREI'];
+                                            const busyTerms = ['0/1', '0 / 1', 'Besetzt', 'OCCUPIED', 'BELEGT', 'In Use', 'In Gebrauch'];
 
                                             if (availTerms.some(t => contextText.includes(t))) {
                                                 status = "Available";
@@ -120,7 +139,7 @@ class ChargerScraper:
                                                 status = "Occupied";
                                             }
 
-                                            results.push({ id, status });
+                                            results.push({ id, status, context: contextText.length });
                                             seenIds.add(id);
                                         }
                                     }
@@ -134,9 +153,13 @@ class ChargerScraper:
                     if connectors:
                         valid = [c for c in connectors if len(c['id'].split('*')) >= 4]
                         if valid:
+                            # Prioritize connectors with known status
                             found_connectors = valid
                             if any(c['status'] != 'Unknown' for c in valid):
+                                self._log(f"Found {len(valid)} connectors with status.")
                                 break
+                            else:
+                                self._log(f"Found {len(valid)} IDs but status is still Unknown. Retrying...")
 
                     await asyncio.sleep(5)
 
@@ -144,13 +167,14 @@ class ChargerScraper:
                     self.status_data["connectors"] = sorted(found_connectors, key=lambda x: x['id'])
                     self.status_data["status"] = "OK"
                     self.status_data["error"] = None
-                    logger.info(f"Successfully scraped: {self.status_data['connectors']}")
+                    self._log(f"Scrape successful: {len(found_connectors)} connectors found.")
                 else:
                     self.status_data["error"] = "Data not found or incomplete."
-                    logger.warning("Scrape failed: Data not found.")
+                    self._log("Scrape failed: Data not found.", logging.WARNING)
+                    await page.screenshot(path="scrape_failure_final.png")
 
             except Exception as e:
-                logger.error(f"Scraper error: {e}")
+                self._log(f"Scraper error: {e}", logging.ERROR)
                 self.status_data["error"] = str(e)
             finally:
                 self.status_data["last_updated"] = datetime.now().isoformat()
@@ -161,5 +185,5 @@ class ChargerScraper:
 if __name__ == "__main__":
     import sys
     u = sys.argv[1] if len(sys.argv) > 1 else "https://ladeverbundplus.chargecloud.de/#/location/details/DE/LVP/3411583"
-    scraper = ChargerScraper(u)
+    scraper = ChargerScraper(u, verbose=True)
     print(json.dumps(asyncio.run(scraper.scrape()), indent=2))

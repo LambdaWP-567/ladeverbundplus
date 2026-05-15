@@ -17,6 +17,7 @@ VOLUME /app/data
 # Environment variables
 ENV SCRAPE_INTERVAL=300
 ENV PROVIDER_NAME="Erlanger Stadtwerke"
+ENV VERBOSE_LOGGING=false
 
 EXPOSE 8000
 

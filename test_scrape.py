@@ -1,11 +1,13 @@
 import asyncio
+import os
 from scraper import ChargerScraper
 import sys
 
 async def main():
+    verbose = os.getenv("VERBOSE_LOGGING", "false").lower() == "true"
     url = "https://ladeverbundplus.chargecloud.de/#/location/details/DE/LVP/3411583"
-    scraper = ChargerScraper(url)
-    print(f"Starting test scrape for {url}...")
+    scraper = ChargerScraper(url, verbose=verbose)
+    print(f"Starting test scrape for {url} (verbose={verbose})...")
     result = await scraper.scrape()
 
     if result["status"] == "OK" and len(result["connectors"]) > 0:

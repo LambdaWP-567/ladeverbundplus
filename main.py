@@ -16,6 +16,7 @@ STATION_BASE_URL = "https://ladeverbundplus.chargecloud.de/#/location/details/DE
 DEFAULT_STATION_ID = "3411583"
 PROVIDER_NAME = os.getenv("PROVIDER_NAME", "Erlanger Stadtwerke")
 SCRAPE_INTERVAL = int(os.getenv("SCRAPE_INTERVAL", 300))
+VERBOSE_LOGGING = os.getenv("VERBOSE_LOGGING", "false").lower() == "true"
 
 # Global state
 charger_data: Dict[str, dict] = {}
@@ -60,7 +61,7 @@ async def perform_scrape_all():
         current_stations = list(stations)
         for sid in current_stations:
             url = f"{STATION_BASE_URL}{sid}"
-            scraper = ChargerScraper(url, PROVIDER_NAME)
+            scraper = ChargerScraper(url, PROVIDER_NAME, verbose=VERBOSE_LOGGING)
             print(f"[{datetime.now()}] Scraping station {sid}...")
             try:
                 result = await scraper.scrape()
