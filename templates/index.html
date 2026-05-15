@@ -1,26 +1,26 @@
-
 <!DOCTYPE html>
 <html>
 <head>
     <title>Charger Status</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        body { font-family: sans-serif; text-align: center; padding: 50px; background-color: #f4f4f4; }
+        body { font-family: sans-serif; text-align: center; padding: 20px; background-color: #f4f4f4; }
         .status-box {
             padding: 20px;
             border-radius: 10px;
             display: inline-block;
-            min-width: 300px;
+            min-width: 350px;
             background-color: white;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
-        .status-OK { color: green; }
+        .status-OK { color: #333; }
         .status-Unknown { color: red; font-size: 48px; font-weight: bold; }
-        .connector { border-top: 1px solid #eee; padding: 10px 0; margin-top: 10px; }
+        .connector { border-top: 1px solid #eee; padding: 15px 0; margin-top: 10px; text-align: left; }
+        .connector-id { font-family: monospace; font-size: 1.1em; color: #555; }
         .available { color: green; font-weight: bold; }
         .occupied { color: orange; font-weight: bold; }
         .error { color: #888; font-size: 12px; margin-top: 20px; }
-        .last-updated { font-size: 14px; color: #666; margin-top: 10px; }
+        .last-updated { font-size: 14px; color: #666; margin-top: 20px; border-top: 1px solid #ddd; padding-top: 10px; }
     </style>
 </head>
 <body>
@@ -31,8 +31,11 @@
             <div class="status-OK">
                 {% for connector in data.connectors %}
                     <div class="connector">
-                        <strong>{{ connector.type }}</strong>:
-                        <span class="{{ connector.status|lower }}">{{ connector.status }}</span>
+                        <div class="connector-id">{{ connector.id }}</div>
+                        <div>
+                            <strong>{{ connector.type }}</strong>:
+                            <span class="{{ connector.status|lower }}">{{ connector.status }}</span>
+                        </div>
                     </div>
                 {% endfor %}
             </div>
@@ -46,7 +49,7 @@
         <div class="last-updated">
             Last Updated: {{ data.last_updated or "Never" }}
         </div>
-        <div style="font-size: 10px; color: #ccc; margin-top: 20px;">
+        <div style="font-size: 10px; color: #ccc; margin-top: 5px;">
             Current Server Time: {{ now }}
         </div>
     </div>
