@@ -9,7 +9,7 @@ from scraper import ChargerScraper
 from datetime import datetime
 from typing import Dict, List
 
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 DATA_DIR = "data"
 CSV_PATH = os.path.join(DATA_DIR, "stations.csv")
 STATION_BASE_URL = "https://ladeverbundplus.chargecloud.de/#/location/details/DE/LVP/"
