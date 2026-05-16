@@ -2,7 +2,7 @@ name: Build and Publish Docker Image
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "charger-scraper-implementation-12210660123557345354" ]
     tags: [ 'v*.*.*' ]
   workflow_dispatch:
 
