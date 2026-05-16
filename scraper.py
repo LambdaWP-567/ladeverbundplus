@@ -5,6 +5,7 @@ import logging
 from datetime import datetime
 import os
 import re
+import shutil
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -15,146 +16,126 @@ class ChargerScraper:
         self.provider_name = provider_name
         self.verbose = verbose
         self.status_data = {"status": "Unknown", "connectors": [], "last_updated": None, "error": "Not started"}
-        self.user_data_dir = "/tmp/playwright_persistent_session"
-        if self.verbose:
-            logger.setLevel(logging.DEBUG)
+        self.user_data_dir = f"/tmp/playwright_session_{os.getpid()}_{datetime.now().microsecond}"
 
     def _log(self, msg, level=logging.INFO):
         logger.log(level, msg)
 
     async def scrape(self):
+        self._log(f"--- STARTING SCRAPE (VERSION 1.2.0) ---")
         async with async_playwright() as p:
             browser_context = await p.chromium.launch_persistent_context(
                 self.user_data_dir,
                 headless=True,
-                viewport={'width': 1280, 'height': 800},
+                viewport={'width': 1280, 'height': 1200},
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
             )
             page = await browser_context.new_page()
 
             if self.verbose:
-                page.on("console", lambda msg: logger.debug(f"BROWSER CONSOLE: {msg.text}"))
-                page.on("requestfailed", lambda req: logger.debug(f"REQUEST FAILED: {req.url} - {req.failure}"))
+                page.on("console", lambda msg: self._log(f"BROWSER: {msg.text}", logging.DEBUG))
 
             try:
-                self._log(f"Navigating to {self.url}")
-                await page.goto(self.url, wait_until="load", timeout=90000)
+                # 1. Navigation with retry
+                self._log(f"Navigating to root to establish session...")
+                await page.goto("https://ladeverbundplus.chargecloud.de/", wait_until="load")
                 await asyncio.sleep(10)
 
-                # Persistence check
-                for _ in range(3):
-                    self._log("Checking page state...")
-                    await page.goto(self.url, wait_until="load")
-                    await asyncio.sleep(15)
+                for cycle in range(1, 15):
+                    curr_url = page.url
+                    self._log(f"Cycle {cycle} | URL: {curr_url}")
 
-                    # Remove persistent loading overlays
-                    await page.evaluate("""
-                        () => {
-                            const spinners = document.querySelectorAll('ion-loading, ion-backdrop, .loading-wrapper, ion-spinner');
-                            spinners.forEach(s => s.remove());
-                            document.body.classList.remove('modal-open');
-                        }
-                    """)
-
-                    title = await page.evaluate("() => document.querySelector('ion-title') ? document.querySelector('ion-title').innerText : ''")
-                    if "PROVIDER" in title or "Anbieter" in title:
-                        self._log("Provider selection screen detected.")
-                        await page.evaluate("""
-                            (name) => {
-                                function findAndClick(root) {
-                                    const items = Array.from(root.querySelectorAll('ion-item, ion-label, div'));
-                                    const target = items.find(i => i.innerText && i.innerText.includes(name));
-                                    if (target) { target.click(); return true; }
-                                    const children = Array.from(root.querySelectorAll('*'));
-                                    for (const child of children) {
-                                        if (child.shadowRoot && findAndClick(child.shadowRoot)) return true;
-                                    }
-                                    return false;
-                                }
-                                findAndClick(document.body);
-                            }
-                        """, self.provider_name)
+                    # A. Handle Provider Selection
+                    if "/settings" in curr_url or await page.evaluate("() => document.body.innerText.includes('Anbieter wählen')"):
+                        self._log(f"Selecting Provider: {self.provider_name}")
+                        await page.get_by_text(self.provider_name).first.click()
+                        await asyncio.sleep(10)
+                        self._log(f"Navigating to station details...")
+                        await page.goto(self.url, wait_until="load")
                         await asyncio.sleep(10)
                         continue
 
-                    # If we see "STANDORT-DETAILS" (from user screenshot), we are likely there
-                    details_visible = await page.evaluate("() => document.body.innerText.includes('STANDORT-DETAILS')")
-                    if details_visible:
-                        self._log("Details page seems loaded.")
-                        break
+                    # B. Cleanup Overlays & Modals
+                    await page.evaluate("""() => {
+                        const words = ["VERSTANDEN", "OK", "CLOSE", "AGREE"];
+                        document.querySelectorAll('button, ion-button, span, div').forEach(b => {
+                            if (words.includes((b.innerText || "").trim().toUpperCase())) b.click();
+                        });
+                        const sel = 'ion-loading, ion-backdrop, .loading-wrapper, ion-spinner, .backdrop-no-tappable, ion-modal';
+                        document.querySelectorAll(sel).forEach(el => el.remove());
+                        document.body.classList.remove('modal-open');
+                    }""")
 
-                    self._log("Still waiting for details content...")
-                    await asyncio.sleep(5)
+                    # C. Unified Extraction Attempt
+                    # This logic finds IDs and Availability Markers by scanning all text nodes
+                    # and associating them by finding common parents or grouping by proximity.
+                    extraction = await page.evaluate("""() => {
+                        const nodes = [];
+                        const idRegex = /DE\\*LVP\\*[A-Z0-9\\*]+/g;
 
-                found_connectors = []
-                for attempt in range(1, 10):
-                    self._log(f"Extraction Attempt {attempt}...")
-
-                    connectors = await page.evaluate("""
-                        () => {
-                            const results = [];
-                            const idRegex = /DE\\*LVP\\*[A-Z0-9\\*]+/g;
-                            const seenIds = new Set();
-
-                            function search(root) {
-                                // Depth-first traversal into shadows
-                                const els = Array.from(root.querySelectorAll('*'));
-                                for (const el of els) {
-                                    if (el.shadowRoot) search(el.shadowRoot);
-                                }
-
-                                const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
-                                let node;
-                                while (node = walker.nextNode()) {
-                                    const text = node.textContent;
-                                    const matches = text.match(idRegex);
-                                    if (matches) {
-                                        for (let id of matches) {
-                                            id = id.trim().replace(/[^A-Z0-9\\*]$/, '');
-                                            if (seenIds.has(id) || id.length < 10) continue;
-
-                                            let contextText = "";
-                                            let curr = node.parentElement;
-                                            for (let i = 0; i < 40; i++) {
-                                                if (!curr) break;
-                                                contextText += " " + (curr.innerText || "");
-                                                curr = curr.parentElement;
-                                            }
-
-                                            let status = "Unknown";
-                                            const availTerms = ['1/1', '1 / 1', 'Verfügbar', 'AVAILABLE', 'FREE', 'FREI'];
-                                            const busyTerms = ['0/1', '0 / 1', 'Besetzt', 'OCCUPIED', 'BELEGT', 'In Use', 'In Gebrauch'];
-
-                                            if (availTerms.some(t => contextText.includes(t))) status = "Available";
-                                            else if (busyTerms.some(t => contextText.includes(t))) status = "Occupied";
-
-                                            results.push({ id, status });
-                                            seenIds.add(id);
-                                        }
-                                    }
+                        function walk(root) {
+                            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+                            let node;
+                            while (node = walker.nextNode()) {
+                                const t = node.textContent.trim();
+                                if (t.includes('DE*LVP') || t.includes('1/1') || t.includes('0/1') || t.includes('1 / 1') || t.includes('0 / 1')) {
+                                    nodes.push({
+                                        text: t,
+                                        // We find a significant ancestor to help group ID with its status
+                                        ancestor: node.parentElement.closest('ion-item, .item-block, div[fittext]') || node.parentElement
+                                    });
                                 }
                             }
-                            search(document.body);
-                            return results;
+                            Array.from(root.querySelectorAll('*')).forEach(el => {
+                                if (el.shadowRoot) walk(el.shadowRoot);
+                            });
                         }
-                    """)
+                        walk(document.body);
 
-                    if connectors:
-                        valid = [c for c in connectors if len(c['id'].split('*')) >= 4]
-                        if valid:
-                            found_connectors = valid
-                            if any(c['status'] != 'Unknown' for c in valid):
-                                self._log(f"Found {len(valid)} connectors with status.")
-                                break
+                        // Grouping logic: find markers and associate with nearest ID
+                        const results = [];
+                        const seenIds = new Set();
 
-                    await asyncio.sleep(5)
+                        // Simple association: we found that they often appear in sequence in the DOM scan
+                        let currentId = null;
+                        for (let i = 0; i < nodes.length; i++) {
+                            const n = nodes[i];
+                            const idMatch = n.text.match(idRegex);
+                            if (idMatch) {
+                                currentId = idMatch[0].trim().replace(/[^A-Z0-9\\*]$/, '');
+                                // Look forward for status
+                                let status = "Unknown";
+                                for (let j = i + 1; j < Math.min(i + 5, nodes.length); j++) {
+                                    const next = nodes[j];
+                                    if (next.text.includes('1 / 1') || next.text.includes('1/1')) { status = "Available"; break; }
+                                    if (next.text.includes('0 / 1') || next.text.includes('0/1')) { status = "Occupied"; break; }
+                                    if (next.text.includes('DE*LVP')) break; // Hit next connector
+                                }
+                                if (!seenIds.has(currentId)) {
+                                    results.push({ id: currentId, status });
+                                    seenIds.add(currentId);
+                                }
+                            }
+                        }
+                        return results;
+                    }""")
 
-                if found_connectors:
-                    self.status_data["connectors"] = sorted(found_connectors, key=lambda x: x['id'])
-                    self.status_data["status"] = "OK"
-                    self.status_data["error"] = None
-                else:
-                    self.status_data["error"] = "Data not found. Layout might have changed."
+                    if extraction and any(c['status'] != 'Unknown' for c in extraction):
+                        self.status_data["connectors"] = sorted(extraction, key=lambda x: x['id'])
+                        self.status_data["status"] = "OK"
+                        self.status_data["error"] = None
+                        self._log(f"Extraction successful! Found {len(extraction)} connectors.")
+                        return self.status_data
+
+                    if cycle % 3 == 0:
+                        self._log("Hydration stuck? Reloading station page...")
+                        await page.goto(self.url, wait_until="load")
+                        await asyncio.sleep(15)
+                    else:
+                        await asyncio.sleep(8)
+
+                self.status_data["error"] = "Data not found after 15 cycles."
+                self._log("Failed to find data markers.", logging.ERROR)
 
             except Exception as e:
                 self._log(f"Scraper error: {e}", logging.ERROR)
@@ -162,6 +143,8 @@ class ChargerScraper:
             finally:
                 self.status_data["last_updated"] = datetime.now().isoformat()
                 await browser_context.close()
+                if os.path.exists(self.user_data_dir):
+                    shutil.rmtree(self.user_data_dir, ignore_errors=True)
 
         return self.status_data
 

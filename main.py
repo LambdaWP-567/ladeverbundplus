@@ -9,7 +9,7 @@ from scraper import ChargerScraper
 from datetime import datetime
 from typing import Dict, List
 
-VERSION = "1.0.3"
+VERSION = "1.2.0"
 DATA_DIR = "data"
 CSV_PATH = os.path.join(DATA_DIR, "stations.csv")
 STATION_BASE_URL = "https://ladeverbundplus.chargecloud.de/#/location/details/DE/LVP/"
@@ -82,6 +82,7 @@ async def update_status_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    print(f"[{datetime.now()}] STARTING CHARGER STATUS APP VERSION {VERSION}")
     load_stations()
     task = asyncio.create_task(update_status_loop())
     yield
