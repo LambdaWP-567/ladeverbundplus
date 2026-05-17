@@ -50,3 +50,24 @@ Example: `git tag v1.3.0` and then push the tag.
    - **Require a pull request before merging**
    - **Require status checks to pass before merging** (Select the 'test' job)
    - **Include administrators**
+
+## Manual Pipeline Triggers
+
+The CI/CD pipeline supports manual execution via the **Actions** tab in GitHub.
+
+### Parameters
+1. **Skip testing phase**: If checked, the pipeline will bypass the `test` job and proceed directly to building and pushing the Docker image.
+2. **Manual release version**: If provided (e.g., `1.3.1`), the pipeline will:
+   - Tag the Docker image with this version.
+   - Create a corresponding GitHub Release and Git Tag automatically.
+
+### Docker Registry URL
+Once pushed, the Docker images are available at:
+`ghcr.io/OWNER/REPOSITORY:latest`
+(Replace OWNER/REPOSITORY with your actual GitHub path, e.g., `ghcr.io/your-user/your-repo:latest`)
+
+## Test Reporting
+After each test execution, HTML reports are uploaded as artifacts.
+1. Go to the specific **Workflow Run**.
+2. Scroll down to the **Artifacts** section.
+3. Download `test-reports` to view detailed `pytest` results for the scraper and UI.
