@@ -2,7 +2,7 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ "main", "master", "charger-scraper-implementation-12210660123557345354" ]
+    branches: [ "main", "master" ]
     tags: [ 'v*.*.*' ]
   pull_request:
     branches: [ "main", "master" ]
@@ -40,33 +40,29 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-asyncio pytest-playwright pytest-html
+          pip install pytest pytest-asyncio pytest-playwright pytest-html requests
           playwright install chromium
           sudo playwright install-deps chromium
 
       - name: Create data directory
         run: mkdir -p data
 
-      - name: Run Structural Tests
-        run: python3 tests/test_build_context.py
-
-      - name: Run Functional Scraper Tests
-        run: PYTHONPATH=. pytest tests/test_scraper_functional.py --html=report_scraper.html --self-contained-html
-
-      - name: Run Frontend UI Tests
-        run: PYTHONPATH=. pytest tests/test_frontend.py --html=report_frontend.html --self-contained-html
+      - name: Run All Tests
+        run: |
+          PYTHONPATH=. pytest tests/ --html=report.html --self-contained-html
 
       - name: Upload Test Reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-reports
-          path: report_*.html
+          path: report.html
 
   build-and-push:
     name: Build and Push Docker Image
     needs: [test]
     # Run if test passed OR if tests were skipped
+    # Ensure we don't push on PRs
     if: |
       always() &&
       (needs.test.result == 'success' || github.event.inputs.skip_tests == 'true') &&

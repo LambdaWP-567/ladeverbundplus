@@ -22,7 +22,7 @@ class ChargerScraper:
         logger.log(level, msg)
 
     async def scrape(self):
-        self._log(f"--- STARTING SCRAPE (VERSION 1.2.0) ---")
+        self._log(f"--- STARTING SCRAPE (VERSION 1.3.0) ---")
         async with async_playwright() as p:
             browser_context = await p.chromium.launch_persistent_context(
                 self.user_data_dir,

@@ -26,3 +26,15 @@ To run manually:
 docker build -t charger-status .
 docker run -p 8000:8000 charger-status
 ```
+
+## Version 1.3.0 Release & Branch Protection
+
+### How to release
+1. Tag the release: `git tag v1.3.0`
+2. Push the tag: `git push origin v1.3.0`
+This will trigger the GitHub Action to build and release the Docker image.
+
+### Branch Protection
+To comply with project requirements, the default branch must be protected:
+1. **Require Pull Requests**: All changes must come through a PR.
+2. **Require Status Checks**: The "Run Test Suite" action must pass before merging.
