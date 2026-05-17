@@ -5,18 +5,18 @@ __pycache__
 .Python
 env/
 venv/
+# Specific excludes for logs and screenshots
 pip-log.txt
 pip-delete-this-directory.txt
-.toast
-.cache
-.pytest_cache
-.coverage
-htmlcov
+*.png
+*.log
+*.html
+*.json
+# Exclude git and github
 .git
 .github
 .gitignore
+# Data persistence should be host-mounted
 data/*.csv
-*.png
-*.txt
-*.html
-*.json
+# IMPORTANT: DO NOT ignore requirements.txt
+!requirements.txt
