@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Charger Tracker (Perl)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f8f9fa; }
+        .station-card { transition: transform 0.2s; border-radius: 12px; }
+        .status-badge { font-size: 0.9rem; }
+        .connector-item { border-left: 5px solid #dee2e6; margin-bottom: 12px; padding: 12px; background: white; border-radius: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .Available { border-left-color: #198754 !important; }
+        .Occupied { border-left-color: #dc3545 !important; }
+        .Unknown { border-left-color: #ffc107 !important; }
+        .loader { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 30px; height: 30px; animation: spin 2s linear infinite; display: inline-block; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .scraping-overlay { position: fixed; top: 20px; right: 20px; z-index: 1000; background: white; padding: 10px 20px; border-radius: 30px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); border: 1px solid #eee; }
+    </style>
+</head>
+<body>
+    % if ($is_scraping) {
+    <div class="scraping-overlay">
+        <div class="loader me-2"></div> <strong>Updating data...</strong>
+    </div>
+    % }
+
+    <div class="container py-5">
+        <div class="d-flex justify-content-between align-items-center mb-5">
+            <h1>Charger Tracker <small class="text-muted fs-6">v<%= $version %> (Perl)</small></h1>
+            <div>
+                <a href="/refresh" class="btn btn-outline-primary me-2">Manual Refresh</a>
+                <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addModal">Add Station</button>
+            </div>
+        </div>
+
+        <div class="row g-4">
+            % for my $sid (sort keys %$charger_data) {
+            % my $info = $charger_data->{$sid};
+            <div class="col-md-6 col-lg-4">
+                <div class="card station-card shadow-sm h-100">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center py-3">
+                        <h5 class="mb-0">Station: <%= $sid %></h5>
+                        <a href="/remove/<%= $sid %>" class="btn btn-sm btn-link text-danger text-decoration-none" onclick="return confirm('Remove?')">Remove</a>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted small mb-3">Updated: <%= german_ts $info->{last_updated} %></p>
+
+                        % if ($info->{error} && ($info->{status} // '') ne 'OK') {
+                            <div class="alert alert-warning py-2 small"><%= $info->{error} %></div>
+                        % }
+
+                        <div class="connectors-list">
+                            % my $connectors = $info->{connectors} // [];
+                            % if (@$connectors) {
+                                % for my $conn (@$connectors) {
+                                <div class="connector-item <%= $conn->{status} %>">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <div class="small fw-bold text-uppercase text-muted" style="font-size: 0.7rem;">Connector ID</div>
+                                            % my @parts = split(/\*/, $conn->{id});
+                                            <span class="font-monospace"><%= $parts[-1] || $conn->{id} %></span>
+                                        </div>
+                                        <span class="badge status-badge <%= $conn->{status} eq 'Available' ? 'bg-success' : $conn->{status} eq 'Occupied' ? 'bg-danger' : 'bg-warning text-dark' %>">
+                                            <%= $conn->{status} %>
+                                        </span>
+                                    </div>
+                                </div>
+                                % }
+                            % } else {
+                                <div class="text-center text-muted py-4">
+                                    % if (($info->{status} // '') eq 'Starting') {
+                                        <div class="loader mb-2"></div><br>First scrape in progress...
+                                    % } else {
+                                        No connectors found yet.
+                                    % }
+                                </div>
+                            % }
+                        </div>
+                    </div>
+                </div>
+            </div>
+            % }
+        </div>
+
+        <div class="mt-5 p-4 bg-light border rounded shadow-sm">
+            <h4>Home Automation Integration</h4>
+            <p>Access current statuses as JSON for your home automation system:</p>
+            <div class="bg-dark text-white p-3 rounded font-monospace mb-3">
+                GET <%= url_for('/status')->to_abs %>
+            </div>
+            <p class="mb-0">Example response:</p>
+            <pre class="bg-white p-2 border rounded small mt-2">
+{
+  "stations": {
+    "3411583": {
+      "status": "OK",
+      "connectors": [
+        {"id": "...*001", "status": "Available"},
+        {"id": "...*002", "status": "Occupied"}
+      ],
+      "last_updated": "..."
+    }
+  }
+}</pre>
+        </div>
+    </div>
+
+    <!-- Add Modal -->
+    <div class="modal fade" id="addModal" tabindex="-1">
+        <div class="modal-dialog">
+            <form action="/add" method="post" class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Track New Station</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Station ID</label>
+                        <input type="text" name="station_id" class="form-control" placeholder="e.g. 3411583" required>
+                        <div class="form-text">The ID from the end of the chargecloud.de URL.</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Start Tracking</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Refresh page every 60 seconds to show latest scrape results
+        setTimeout(() => {
+            if (!document.querySelector('.modal.show')) {
+                window.location.reload();
+            }
+        }, 60000);
+    </script>
+</body>
+</html>
