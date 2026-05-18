@@ -1,0 +1,6 @@
+requires 'Mojolicious', '9.00';
+requires 'Playwright', '1.431';
+requires 'Text::CSV';
+requires 'DateTime';
+requires 'DateTime::Format::ISO8601';
+requires 'JSON';
